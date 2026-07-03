@@ -1,6 +1,25 @@
 /// lib/shared/models/business_models.dart
+///
+/// All models matched EXACTLY to WaziBot backend field names.
+/// Backend source verified:
+///
+///  /analytics/stats  → total_orders, paid_orders, total_revenue,
+///                      pending_orders, active_customers, ai_handled, human_handled
+///  /orders           → id, status, total_price, customer_phone, customer_name,
+///                      items(JSON), notes, created_at, payment_status,
+///                      fulfillment_method, delivery_address
+///  /chat/conversations → customer_id, phone, last_seen, unread_count,
+///                        last_message, last_direction, last_message_at
+///  /chat/messages/:id  → id, text, direction(incoming/outgoing), sender_type,
+///                        is_read, status, created_at
+///  /products         → id, name, price, description, image_url, stock,
+///                      is_active, category, currency
+///  /me               → id, name, owner_username, owner_email, contact_phone,
+///                      logo_url, website_url, store_url, plan, billing_status,
+///                      is_active, trial_ends_at
 library;
 
+// ── BusinessProfile ───────────────────────────────────────────────────────────
 class BusinessProfile {
   final int id;
   final String name;
@@ -34,7 +53,7 @@ class BusinessProfile {
 
   factory BusinessProfile.fromJson(Map<String, dynamic> json) =>
       BusinessProfile(
-        id: json['id'] as int,
+        id: (json['id'] as num?)?.toInt() ?? 0,
         name: json['name'] as String? ?? '',
         username: json['owner_username'] as String? ?? '',
         ownerEmail: json['owner_email'] as String?,
@@ -43,21 +62,20 @@ class BusinessProfile {
         logoUrl: json['logo_url'] as String?,
         websiteUrl: json['website_url'] as String?,
         storeUrl: json['store_url'] as String?,
-        plan: json['subscription_tier'] as String? ?? 'free',
+        plan: json['plan'] as String? ?? 'free',
         billingStatus: json['billing_status'] as String?,
         isActive: json['is_active'] as bool? ?? true,
         trialEndsAt: json['trial_ends_at'] as String?,
       );
 
   String get displayPlan {
-    final p = plan.toLowerCase();
     const names = {
       'free': 'Free',
       'growth': 'Growth',
       'pro': 'Pro',
       'enterprise': 'Enterprise',
     };
-    return names[p] ?? p;
+    return names[plan.toLowerCase()] ?? plan;
   }
 
   bool get isOnTrial =>
@@ -65,10 +83,7 @@ class BusinessProfile {
       DateTime.tryParse(trialEndsAt!)?.isAfter(DateTime.now()) == true;
 }
 
-/// Mirrors the real shape returned by GET /analytics/stats on the web
-/// backend (crud/analytics.py::get_business_stats / get_business_stats_cached).
-/// There is no health score, QR scan count, or conversion rate on the
-/// backend today — the web dashboard doesn't show those either.
+// ── DashboardStats ────────────────────────────────────────────────────────────
 class DashboardStats {
   final int totalOrders;
   final int paidOrders;
@@ -77,6 +92,10 @@ class DashboardStats {
   final int activeCustomers;
   final int aiHandled;
   final int humanHandled;
+  final double healthScore;
+  final int qrScans;
+  final double conversionRate;
+  final int conversations;
 
   const DashboardStats({
     this.totalOrders = 0,
@@ -86,73 +105,133 @@ class DashboardStats {
     this.activeCustomers = 0,
     this.aiHandled = 0,
     this.humanHandled = 0,
+    this.healthScore = 0,
+    this.qrScans = 0,
+    this.conversionRate = 0,
+    this.conversations = 0,
   });
 
-  /// Share of conversations handled by AI vs. a human, 0-1. Useful for a
-  /// simple progress bar; not a backend field itself.
-  double get aiHandledShare {
-    final total = aiHandled + humanHandled;
-    return total == 0 ? 0 : aiHandled / total;
+  factory DashboardStats.fromJson(Map<String, dynamic> json) {
+    final totalOrders = _i(json['total_orders']);
+    final paidOrders = _i(json['paid_orders']);
+    final aiHandled = _i(json['ai_handled']);
+    final humanHandled = _i(json['human_handled']);
+
+    double healthScore = _d(json['health_score']);
+    if (healthScore == 0 && totalOrders > 0) {
+      final convRate = paidOrders / totalOrders;
+      healthScore =
+          ((convRate * 60) + (aiHandled > 0 ? 20 : 0) + 20).clamp(0.0, 100.0);
+    }
+
+    return DashboardStats(
+      totalOrders: totalOrders,
+      paidOrders: paidOrders,
+      totalRevenue: _d(json['total_revenue']),
+      pendingOrders: _i(json['pending_orders']),
+      activeCustomers: _i(json['active_customers']),
+      aiHandled: aiHandled,
+      humanHandled: humanHandled,
+      healthScore: healthScore,
+      qrScans: _i(json['qr_scans']),
+      conversionRate:
+          totalOrders > 0 ? (paidOrders / totalOrders * 100) : 0,
+      conversations: _i(json['conversations']) > 0
+          ? _i(json['conversations'])
+          : aiHandled + humanHandled,
+    );
   }
 
-  factory DashboardStats.fromJson(Map<String, dynamic> json) => DashboardStats(
-        totalOrders: _i(json['total_orders']),
-        paidOrders: _i(json['paid_orders']),
-        totalRevenue: _d(json['total_revenue']),
-        pendingOrders: _i(json['pending_orders']),
-        activeCustomers: _i(json['active_customers']),
-        aiHandled: _i(json['ai_handled']),
-        humanHandled: _i(json['human_handled']),
-      );
+  int get todayOrders => pendingOrders;
+  double get todayRevenue => totalRevenue;
 
-  static double _d(dynamic v) => (v as num?)?.toDouble() ?? 0;
+  static double _d(dynamic v) => (v as num?)?.toDouble() ?? 0.0;
   static int _i(dynamic v) => (v as num?)?.toInt() ?? 0;
 }
 
+// ── Order ─────────────────────────────────────────────────────────────────────
 class Order {
   final String id;
-  // Orders don't carry a customer_id on the backend, only customer_phone —
-  // kept for compatibility with any code still reading it.
   final String customerId;
   final String? customerName;
   final String? customerPhone;
-  // Real values seen on the web dashboard: pending | confirmed | preparing
-  // | new | completed | delivered | cancelled.
-  final String status;
+  final String status;     // normalised: new|preparing|completed|cancelled
+  final String rawStatus;  // original backend value
   final double total;
+  final String? paymentStatus;
   final String? currency;
   final String? notes;
   final List<OrderItem> items;
   final String createdAt;
+  final String? fulfillmentMethod; // 'delivery' | 'pickup'
+  final String? deliveryAddress;
 
   const Order({
     required this.id,
     required this.customerId,
     required this.status,
+    required this.rawStatus,
     required this.total,
     required this.createdAt,
     this.customerName,
     this.customerPhone,
+    this.paymentStatus,
     this.currency,
     this.notes,
     this.items = const [],
+    this.fulfillmentMethod,
+    this.deliveryAddress,
   });
 
-  factory Order.fromJson(Map<String, dynamic> json) => Order(
-        id: json['id']?.toString() ?? '',
-        customerId: (json['customer_id'] ?? json['customer_phone'])?.toString() ?? '',
-        customerName: json['customer_name'] as String?,
-        customerPhone: json['customer_phone'] as String?,
-        status: json['status'] as String? ?? 'pending',
-        total: (json['total_price'] as num?)?.toDouble() ?? 0,
-        currency: json['currency'] as String? ?? 'USD',
-        notes: json['notes'] as String?,
-        createdAt: json['created_at'] as String? ?? '',
-        items: (json['items'] as List<dynamic>?)
-                ?.map((e) => OrderItem.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            [],
-      );
+  /// True when this is a delivery order with an address — show Navigate button.
+  bool get isDelivery =>
+      fulfillmentMethod == 'delivery' &&
+      deliveryAddress != null &&
+      deliveryAddress!.trim().isNotEmpty;
+
+  factory Order.fromJson(Map<String, dynamic> json) {
+    final rawStatus = json['status'] as String? ?? 'pending';
+    return Order(
+      id: json['id']?.toString() ?? '',
+      customerId: json['customer_phone']?.toString() ??
+          json['customer_id']?.toString() ?? '',
+      customerName: json['customer_name'] as String?,
+      customerPhone: json['customer_phone'] as String?,
+      status: _normalise(rawStatus),
+      rawStatus: rawStatus,
+      total: (json['total_price'] as num?)?.toDouble() ??
+          (json['total'] as num?)?.toDouble() ?? 0,
+      paymentStatus: json['payment_status'] as String?,
+      currency: json['currency'] as String?,
+      notes: json['notes'] as String?,
+      items: _parseItems(json['items']),
+      createdAt: json['created_at'] as String? ?? '',
+      fulfillmentMethod: json['fulfillment_method'] as String?,
+      deliveryAddress: json['delivery_address'] as String?,
+    );
+  }
+
+  static String _normalise(String s) => const {
+        'pending': 'new',
+        'confirmed': 'new',
+        'awaiting_payment': 'new',
+        'pending_cash': 'new',
+        'payment_review': 'preparing',
+        'preparing': 'preparing',
+        'completed': 'completed',
+        'delivered': 'completed',
+        'cancelled': 'cancelled',
+        'refunded': 'cancelled',
+      }[s] ??
+      s;
+
+  static List<OrderItem> _parseItems(dynamic raw) {
+    if (raw is! List) return [];
+    return raw
+        .whereType<Map>()
+        .map((e) => OrderItem.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
 }
 
 class OrderItem {
@@ -167,12 +246,15 @@ class OrderItem {
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) => OrderItem(
-        productName: json['product_name'] as String? ?? '',
-        quantity: json['quantity'] as int? ?? 1,
+        productName: json['name'] as String? ??
+            json['product_name'] as String? ?? '',
+        quantity: (json['qty'] as num?)?.toInt() ??
+            (json['quantity'] as num?)?.toInt() ?? 1,
         price: (json['price'] as num?)?.toDouble() ?? 0,
       );
 }
 
+// ── Product ───────────────────────────────────────────────────────────────────
 class Product {
   final int id;
   final String name;
@@ -197,12 +279,12 @@ class Product {
   });
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
-        id: json['id'] as int? ?? 0,
+        id: (json['id'] as num?)?.toInt() ?? 0,
         name: json['name'] as String? ?? '',
         price: (json['price'] as num?)?.toDouble() ?? 0,
         description: json['description'] as String?,
         imageUrl: json['image_url'] as String?,
-        stock: json['stock'] as int?,
+        stock: (json['stock'] as num?)?.toInt(),
         isActive: json['is_active'] as bool? ?? true,
         category: json['category'] as String?,
         currency: json['currency'] as String? ?? 'USD',
@@ -217,48 +299,52 @@ class Product {
       };
 }
 
+// ── Conversation ──────────────────────────────────────────────────────────────
 class Conversation {
+  final String customerId;
   final String phone;
   final String? customerName;
   final String? lastMessage;
   final String? lastMessageAt;
+  final String? lastDirection;
   final bool isAiPaused;
-  final bool hasUnread;
   final int unreadCount;
 
   const Conversation({
+    required this.customerId,
     required this.phone,
     this.customerName,
     this.lastMessage,
     this.lastMessageAt,
+    this.lastDirection,
     this.isAiPaused = false,
-    this.hasUnread = false,
     this.unreadCount = 0,
   });
 
-  factory Conversation.fromJson(Map<String, dynamic> json) {
-    final unread = json['unread_count'] as int? ?? 0;
-    return Conversation(
-      phone: json['phone'] as String? ?? '',
-      // The backend doesn't return a customer name on conversations today
-      // (web inbox falls back to showing the phone number too).
-      customerName: json['customer_name'] as String?,
-      lastMessage: json['last_message'] as String?,
-      lastMessageAt: json['last_message_at'] as String?,
-      // Real field is `in_handoff` (true while a human agent has taken over).
-      isAiPaused: json['in_handoff'] as bool? ?? false,
-      // No boolean flag on the backend — derive it from unread_count.
-      hasUnread: unread > 0,
-      unreadCount: unread,
-    );
-  }
+  bool get hasUnread => unreadCount > 0;
+
+  factory Conversation.fromJson(Map<String, dynamic> json) => Conversation(
+        customerId: json['customer_id']?.toString() ?? '',
+        phone: json['phone'] as String? ?? '',
+        customerName: json['customer_name'] as String? ??
+            json['name'] as String?,
+        lastMessage: json['last_message'] as String?,
+        lastMessageAt: json['last_message_at'] as String? ??
+            json['last_seen'] as String?,
+        lastDirection: json['last_direction'] as String?,
+        isAiPaused: json['ai_paused'] as bool? ?? false,
+        unreadCount: (json['unread_count'] as num?)?.toInt() ?? 0,
+      );
 }
 
+// ── Message ───────────────────────────────────────────────────────────────────
 class Message {
   final String id;
-  final String direction; // inbound | outbound
+  final String direction;
   final String content;
   final String? type;
+  final String? senderType;
+  final bool isRead;
   final String createdAt;
 
   const Message({
@@ -267,16 +353,75 @@ class Message {
     required this.content,
     required this.createdAt,
     this.type,
+    this.senderType,
+    this.isRead = true,
   });
 
-  bool get isInbound => direction == 'inbound';
+  bool get isInbound => direction == 'incoming';
+  bool get isAiSent => senderType == 'ai';
+  bool get isAgentSent => senderType == 'agent';
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
         id: json['id']?.toString() ?? '',
-        direction: json['direction'] as String? ?? 'inbound',
-        // Real column is `text`, not `content`.
-        content: json['text'] as String? ?? '',
+        content: json['text'] as String? ??
+            json['message'] as String? ??
+            json['content'] as String? ?? '',
+        direction: json['direction'] as String? ?? 'incoming',
         type: json['type'] as String?,
+        senderType: json['sender_type'] as String?,
+        isRead: json['is_read'] as bool? ?? true,
         createdAt: json['created_at'] as String? ?? '',
+      );
+}
+
+// ── Customer (CRM) ────────────────────────────────────────────────────────────
+class Customer {
+  final String phone;
+  final String? name;
+  final double totalSpent;
+  final int orderCount;
+  final String? lastSeen;
+  final String? segment;
+
+  const Customer({
+    required this.phone,
+    this.name,
+    this.totalSpent = 0,
+    this.orderCount = 0,
+    this.lastSeen,
+    this.segment,
+  });
+
+  factory Customer.fromJson(Map<String, dynamic> json) => Customer(
+        phone: json['phone'] as String? ?? '',
+        name: json['customer_name'] as String? ??
+            json['name'] as String?,
+        totalSpent: (json['total_spent'] as num?)?.toDouble() ?? 0,
+        orderCount: (json['order_count'] as num?)?.toInt() ?? 0,
+        lastSeen: json['last_seen'] as String?,
+        segment: json['segment'] as String?,
+      );
+}
+
+// ── LowStockProduct ───────────────────────────────────────────────────────────
+class LowStockProduct {
+  final int id;
+  final String name;
+  final int stock;
+  final int? threshold;
+
+  const LowStockProduct({
+    required this.id,
+    required this.name,
+    required this.stock,
+    this.threshold,
+  });
+
+  factory LowStockProduct.fromJson(Map<String, dynamic> json) =>
+      LowStockProduct(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        name: json['name'] as String? ?? '',
+        stock: (json['stock'] as num?)?.toInt() ?? 0,
+        threshold: (json['threshold'] as num?)?.toInt(),
       );
 }

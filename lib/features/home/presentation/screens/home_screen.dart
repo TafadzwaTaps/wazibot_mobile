@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/api/api_client.dart';
-import '../../../../core/auth/auth_service.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/models/business_models.dart';
@@ -140,15 +139,15 @@ class _BusinessHeader extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            WaziBotColors.primary.withOpacity(0.15),
-            WaziBotColors.primary.withOpacity(0.05),
+            WaziBotColors.primary.withValues(alpha: 0.15),
+            WaziBotColors.primary.withValues(alpha: 0.05),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: WaziBotColors.primary.withOpacity(0.25), width: 1),
+            color: WaziBotColors.primary.withValues(alpha: 0.25), width: 1),
       ),
       child: Row(children: [
         // Avatar/logo
@@ -156,10 +155,10 @@ class _BusinessHeader extends StatelessWidget {
           width: 52,
           height: 52,
           decoration: BoxDecoration(
-            color: WaziBotColors.primary.withOpacity(0.2),
+            color: WaziBotColors.primary.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-                color: WaziBotColors.primary.withOpacity(0.4), width: 1),
+                color: WaziBotColors.primary.withValues(alpha: 0.4), width: 1),
           ),
           child: const Icon(Icons.store_outlined,
               color: WaziBotColors.primary, size: 28),
@@ -220,10 +219,10 @@ class _PlanBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: WaziBotColors.primary.withOpacity(0.2),
+        color: WaziBotColors.primary.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(20),
         border:
-            Border.all(color: WaziBotColors.primary.withOpacity(0.4), width: 1),
+            Border.all(color: WaziBotColors.primary.withValues(alpha: 0.4), width: 1),
       ),
       child: Text(
         isOnTrial ? '$plan (Trial)' : plan,
@@ -292,7 +291,7 @@ class _HandledByCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final total = stats.aiHandled + stats.humanHandled;
-    final share = stats.aiHandledShare;
+    final share = total > 0 ? stats.aiHandled / total : 0.0;
 
     return Card(
       child: Padding(
@@ -405,7 +404,7 @@ class _QuickActionButton extends StatelessWidget {
             width: 38,
             height: 38,
             decoration: BoxDecoration(
-              color: qa.color.withOpacity(0.15),
+              color: qa.color.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(qa.icon, color: qa.color, size: 20),

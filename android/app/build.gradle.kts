@@ -25,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.wazibot.mobile"
         // local_auth + flutter_local_notifications require minSdk 21 (Android 5.0)
-        minSdk = flutter.minSdkVersion
+        minSdk = 21
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

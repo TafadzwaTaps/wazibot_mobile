@@ -216,6 +216,22 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }
   }
 
+  /// Mirrors web qaGenerateInvoice — finds most recent order and sends invoice message
+  Future<void> _quickGenerateInvoice() async {
+    final order = await _findPendingOrderForCustomer();
+    if (!mounted) return;
+    if (order == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No recent orders found for this customer')));
+      return;
+    }
+    final orderId = order['order_id'];
+    await _sendQuickReply(
+      '🧾 *Invoice for ORDER-$orderId*\n\nHere is a summary of your order. Reply *paid* once payment is complete.',
+      'Invoice sent for ORDER-$orderId',
+    );
+  }
+
   Future<void> _quickDeliveryRequest() => _sendQuickReply(
         "🚚 *Delivery Confirmation*\n\nPlease send your *full delivery address* (street, suburb, city) and we'll arrange delivery for your order.",
         'Delivery request sent',
@@ -341,6 +357,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             onRequestPayment: _quickRequestPayment,
             onMarkPaid: _quickMarkPaid,
             onDeliveryRequest: _quickDeliveryRequest,
+            onGenerateInvoice: _quickGenerateInvoice,
             disabled: _isSending,
           ),
           _MessageBar(
@@ -365,6 +382,7 @@ class _QuickActionsBar extends StatelessWidget {
   final VoidCallback onRequestPayment;
   final VoidCallback onMarkPaid;
   final VoidCallback onDeliveryRequest;
+  final VoidCallback onGenerateInvoice;
   final bool disabled;
 
   const _QuickActionsBar({
@@ -372,6 +390,7 @@ class _QuickActionsBar extends StatelessWidget {
     required this.onRequestPayment,
     required this.onMarkPaid,
     required this.onDeliveryRequest,
+    required this.onGenerateInvoice,
     required this.disabled,
   });
 
@@ -383,6 +402,7 @@ class _QuickActionsBar extends StatelessWidget {
       (Icons.payments_outlined, 'Request payment', onRequestPayment),
       (Icons.check_circle_outline, 'Mark paid', onMarkPaid),
       (Icons.local_shipping_outlined, 'Delivery request', onDeliveryRequest),
+      (Icons.receipt_outlined, 'Send invoice', onGenerateInvoice),
     ];
 
     return Container(
