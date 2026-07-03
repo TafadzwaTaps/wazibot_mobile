@@ -1,0 +1,6 @@
+# Copy this file to key.properties and fill in your values
+# NEVER commit key.properties to git
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=wazibot
+storeFile=C:\\Users\\manix\\wazibot-release.jks
