@@ -11,19 +11,9 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/models/business_models.dart';
 import '../../../../shared/widgets/stat_card.dart';
 import '../../../../shared/widgets/loading_shimmer.dart';
-
-// ── Providers ─────────────────────────────────────────────────────────────────
-final businessProfileProvider = FutureProvider<BusinessProfile>((ref) async {
-  final api = ref.watch(apiClientProvider);
-  final resp = await api.get('/me');
-  return BusinessProfile.fromJson(resp.data as Map<String, dynamic>);
-});
-
-final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {
-  final api = ref.watch(apiClientProvider);
-  final resp = await api.get('/analytics/stats');
-  return DashboardStats.fromJson(resp.data as Map<String, dynamic>);
-});
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../../shared/providers/cached_providers.dart';
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 class HomeScreen extends ConsumerWidget {
@@ -32,15 +22,21 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final profileAsync = ref.watch(businessProfileProvider);
-    final statsAsync = ref.watch(dashboardStatsProvider);
+    final profileAsync = ref.watch(cachedProfileProvider);
+    final statsAsync = ref.watch(cachedAnalyticsProvider).whenData(DashboardStats.fromJson);
 
     return Scaffold(
       body: RefreshIndicator(
         color: WaziBotColors.primary,
         onRefresh: () async {
-          ref.invalidate(businessProfileProvider);
-          ref.invalidate(dashboardStatsProvider);
+          ref.invalidate(cachedProfileProvider);
+          ref.invalidate(cachedAnalyticsProvider);
+          ref.invalidate(repeatCustomersProvider);
+          ref.invalidate(satisfactionProvider);
+          ref.invalidate(trialStatusProvider);
+          ref.invalidate(growthInsightsProvider);
+          ref.invalidate(cachedProductsProvider);
+          ref.invalidate(cachedOrdersProvider(null));
         },
         child: CustomScrollView(
           slivers: [
@@ -108,6 +104,22 @@ class HomeScreen extends ConsumerWidget {
                     error: (_, __) => const SizedBox.shrink(),
                     data: (stats) => _HandledByCard(stats: stats),
                   ),
+                  const SizedBox(height: 20),
+
+                  // ── Repeat Rate + Satisfaction row ────────────────────
+                  const _RepeatSatisfactionRow(),
+                  const SizedBox(height: 20),
+
+                  // ── Business Health (mirrors web loadHealthWidget) ─────────
+                  const _BusinessHealthWidget(),
+                  const SizedBox(height: 20),
+
+                  // ── Growth Insights (mirrors web renderGrowthCard) ─────────
+                  const _GrowthInsightsCard(),
+                  const SizedBox(height: 20),
+
+                  // ── Store link banner ──────────────────────────────────────
+                  const _StoreLinkBanner(),
                   const SizedBox(height: 20),
 
                   // ── Quick actions ─────────────────────────────────────────
@@ -341,6 +353,8 @@ class _HandledByCard extends StatelessWidget {
 
 // ── Quick actions ─────────────────────────────────────────────────────────────
 class _QuickActions extends ConsumerWidget {
+  const _QuickActions();
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final actions = [
@@ -348,12 +362,12 @@ class _QuickActions extends ConsumerWidget {
           () => context.go(Routes.orders)),
       _QA(Icons.inbox_outlined, 'Inbox', WaziBotColors.primary,
           () => context.go(Routes.inbox)),
-      _QA(Icons.qr_code_2, 'Scan QR', const Color(0xFF8B5CF6),
+      _QA(Icons.qr_code_2, 'QR Code', const Color(0xFF8B5CF6),
           () => context.go(Routes.qr)),
       _QA(Icons.share_outlined, 'Share Store', WaziBotColors.warning,
-          () => _shareStore(ref)),
+          () => _share(context, ref)),
       _QA(Icons.open_in_browser_outlined, 'Website', WaziBotColors.error,
-          () => _openWebsite(ref)),
+          () => context.push('/website')),
     ];
 
     return Wrap(
@@ -363,13 +377,20 @@ class _QuickActions extends ConsumerWidget {
     );
   }
 
-  void _shareStore(WidgetRef ref) {
-    // share_plus integration
+  static Future<void> _share(BuildContext context, WidgetRef ref) async {
+    final profile = ref.read(cachedProfileProvider).valueOrNull;
+    if (profile == null) return;
+    final slug = _buildSlug(profile.name);
+    final storeUrl =
+        'https://wazibot-api-assistant.onrender.com/store/$slug';
+    await Share.share('Order from ${profile.name}:\n$storeUrl');
   }
 
-  void _openWebsite(WidgetRef ref) {
-    // url_launcher integration
-  }
+  static String _buildSlug(String name) => name
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+'), '')
+      .replaceAll(RegExp(r'-+$'), '');
 }
 
 class _QA {
@@ -420,6 +441,366 @@ class _QuickActionButton extends StatelessWidget {
     );
   }
 }
+
+// ── Repeat Rate + Satisfaction row ───────────────────────────────────────────
+/// Mirrors web stat-repeat-rate and stat-satisfaction elements on the overview.
+class _RepeatSatisfactionRow extends ConsumerWidget {
+  const _RepeatSatisfactionRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final repeatAsync = ref.watch(repeatCustomersProvider);
+    final satAsync = ref.watch(satisfactionProvider);
+
+    return Row(children: [
+      // Repeat rate card
+      Expanded(child: Card(
+        child: Padding(padding: const EdgeInsets.all(14), child:
+          repeatAsync.when(
+            loading: () => const LoadingShimmer(height: 60),
+            error: (_, __) => const SizedBox(height: 60),
+            data: (d) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.repeat_rounded, size: 13, color: WaziBotColors.primary),
+                  const SizedBox(width: 5),
+                  Text('REPEAT RATE', style: TextStyle(fontSize: 9,
+                      fontWeight: FontWeight.w700, letterSpacing: 0.8,
+                      color: theme.colorScheme.onSurfaceVariant)),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                  _fmtRate(d['repeat_rate_pct']),
+                  style: const TextStyle(fontSize: 24,
+                      fontWeight: FontWeight.w700, color: WaziBotColors.primary),
+                ),
+                Text(
+                  d['repeat_customers'] != null
+                      ? '${d['repeat_customers']} of ${d['total_customers']} reordered'
+                      : 'No data yet',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      )),
+      const SizedBox(width: 10),
+      // Satisfaction card
+      Expanded(child: Card(
+        child: Padding(padding: const EdgeInsets.all(14), child:
+          satAsync.when(
+            loading: () => const LoadingShimmer(height: 60),
+            error: (_, __) => const SizedBox(height: 60),
+            data: (d) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.star_outline_rounded, size: 13,
+                      color: WaziBotColors.warning),
+                  const SizedBox(width: 5),
+                  Text('SATISFACTION', style: TextStyle(fontSize: 9,
+                      fontWeight: FontWeight.w700, letterSpacing: 0.8,
+                      color: theme.colorScheme.onSurfaceVariant)),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                  d['avg_rating'] != null
+                      ? '${(d['avg_rating'] as num).toStringAsFixed(1)} / 5'
+                      : '—',
+                  style: const TextStyle(fontSize: 24,
+                      fontWeight: FontWeight.w700, color: WaziBotColors.warning),
+                ),
+                Text(
+                  (d['rated_count'] as num?)?.toInt() == 0 || d['rated_count'] == null
+                      ? 'No ratings yet'
+                      : '${d['rated_count']} rating${d['rated_count'] == 1 ? '' : 's'}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
+      )),
+    ]);
+  }
+
+  static String _fmtRate(dynamic v) {
+    if (v == null) return '0%';
+    final n = (v as num).toDouble();
+    if (n.isNaN || n.isInfinite) return '0%';
+    return '${n.toStringAsFixed(0)}%';
+  }
+}
+
+// ── Business Health widget ────────────────────────────────────────────────────
+/// Mirrors web loadHealthWidget exactly:
+/// 4 checks — WhatsApp, Products, Payment, First Order → score X/4
+class _BusinessHealthWidget extends ConsumerWidget {
+  const _BusinessHealthWidget();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final profileAsync = ref.watch(cachedProfileProvider);
+    final productsAsync = ref.watch(cachedProductsProvider);
+    final ordersAsync = ref.watch(cachedOrdersProvider(null));
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Business Health', style: theme.textTheme.titleMedium),
+      const SizedBox(height: 10),
+      profileAsync.when(
+        loading: () => const LoadingShimmer(height: 160),
+        error: (_, __) => const SizedBox.shrink(),
+        data: (profile) {
+          final products = productsAsync.valueOrNull ?? [];
+          final orders = ordersAsync.valueOrNull ?? [];
+
+          final checks = [
+            _HealthCheck(
+              label: 'WhatsApp Connected',
+              ok: profile.contactPhone != null && profile.contactPhone!.isNotEmpty,
+              guidance: 'Add your WhatsApp number in Settings → Profile.',
+              route: Routes.settings,
+            ),
+            _HealthCheck(
+              label: 'Products Added',
+              ok: products.isNotEmpty,
+              guidance: 'Add at least one product so customers can order.',
+              route: Routes.products,
+            ),
+            _HealthCheck(
+              label: 'Payment Method Configured',
+              ok: profile.ownerEmail != null || profile.contactPhone != null,
+              guidance: 'Add a payment method in Settings → Payments.',
+              route: Routes.settings,
+            ),
+            _HealthCheck(
+              label: 'First Order Received',
+              ok: orders.isNotEmpty,
+              guidance: 'Share your store link to get your first order.',
+              route: Routes.qr,
+            ),
+          ];
+
+          final score = checks.where((c) => c.ok).length;
+          final allOk = score == 4;
+          final scoreColor = allOk ? WaziBotColors.success : WaziBotColors.warning;
+
+          return Card(child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Score header
+              Row(children: [
+                Text('$score/4', style: TextStyle(fontSize: 28,
+                    fontWeight: FontWeight.w800, color: scoreColor)),
+                const SizedBox(width: 12),
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(allOk ? '✅ All systems go!' : '${4 - score} item${4 - score > 1 ? 's' : ''} need attention',
+                      style: theme.textTheme.titleSmall?.copyWith(color: scoreColor)),
+                  Text(allOk
+                      ? 'Your AI employee is fully configured.'
+                      : 'Complete these steps to go fully live.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant)),
+                ]),
+              ]),
+              const SizedBox(height: 14),
+              ...checks.map((c) => _HealthCheckRow(check: c, theme: theme)),
+            ]),
+          ));
+        },
+      ),
+    ]);
+  }
+}
+
+class _HealthCheck {
+  final String label;
+  final bool ok;
+  final String guidance;
+  final String route;
+  const _HealthCheck({
+    required this.label, required this.ok,
+    required this.guidance, required this.route,
+  });
+}
+
+class _HealthCheckRow extends StatelessWidget {
+  final _HealthCheck check;
+  final ThemeData theme;
+  const _HealthCheckRow({required this.check, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: check.ok ? null : () => context.go(check.route),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: check.ok
+                ? theme.colorScheme.surfaceContainerHighest
+                : WaziBotColors.warning.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: check.ok
+                  ? theme.colorScheme.outline
+                  : WaziBotColors.warning.withValues(alpha: 0.3),
+            ),
+          ),
+          child: Row(children: [
+            Icon(check.ok ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+                size: 18,
+                color: check.ok ? WaziBotColors.success : WaziBotColors.warning),
+            const SizedBox(width: 10),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(check.label, style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: check.ok ? FontWeight.w500 : FontWeight.w700)),
+                if (!check.ok)
+                  Text(check.guidance, style: theme.textTheme.bodySmall?.copyWith(
+                      color: WaziBotColors.warning, fontSize: 11),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
+              ],
+            )),
+            if (!check.ok)
+              Icon(Icons.chevron_right_rounded, size: 18,
+                  color: theme.colorScheme.onSurfaceVariant),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Growth Insights card ──────────────────────────────────────────────────────
+/// Mirrors web renderGrowthCard — shows quick wins from /insights/growth
+class _GrowthInsightsCard extends ConsumerWidget {
+  const _GrowthInsightsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final insightsAsync = ref.watch(growthInsightsProvider);
+
+    return insightsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (wins) {
+        if (wins.isEmpty) return const SizedBox.shrink();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Growth Insights', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 10),
+          Card(child: Column(
+            children: wins.take(3).map((w) {
+              final isHigh = w['priority'] == 'high';
+              return ListTile(
+                leading: Text(isHigh ? '🔴' : '🟡',
+                    style: const TextStyle(fontSize: 18)),
+                title: Text(w['title'] as String? ?? '',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600)),
+                subtitle: Text(w['value'] as String? ?? '',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant),
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                dense: true,
+              );
+            }).toList(),
+          )),
+        ]);
+      },
+    );
+  }
+}
+
+// ── Store link banner ─────────────────────────────────────────────────────────
+/// Mirrors web showShareStoreBanner — lets owner share their store URL
+/// Generated from business name slug: /store/{slug}
+class _StoreLinkBanner extends ConsumerWidget {
+  const _StoreLinkBanner();
+
+  static const _baseUrl = 'https://wazibot-api-assistant.onrender.com';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final profileAsync = ref.watch(cachedProfileProvider);
+
+    return profileAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (profile) {
+        // Build the store slug from business name — same logic as web
+        final slug = profile.name
+            .toLowerCase()
+            .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+            .replaceAll(RegExp(r'^-+|-+$'), '');
+        final storeUrl = '$_baseUrl/store/$slug';
+
+        return Card(child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.storefront_outlined,
+                  size: 18, color: WaziBotColors.primary),
+              const SizedBox(width: 8),
+              Text('Your Store Link', style: theme.textTheme.titleSmall),
+            ]),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: theme.colorScheme.outline),
+              ),
+              child: Text(storeUrl,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: WaziBotColors.primary,
+                      fontFamily: 'monospace'),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: OutlinedButton.icon(
+                onPressed: () => Share.share(
+                  'Order from ${profile.name} on WhatsApp:\n$storeUrl',
+                ),
+                icon: const Icon(Icons.share_outlined, size: 16),
+                label: const Text('Share'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: WaziBotColors.primary,
+                  side: BorderSide(
+                      color: WaziBotColors.primary.withValues(alpha: 0.4)),
+                ),
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: OutlinedButton.icon(
+                onPressed: () async {
+                  final uri = Uri.parse(storeUrl);
+                  if (await canLaunchUrl(uri)) launchUrl(uri);
+                },
+                icon: const Icon(Icons.open_in_browser_outlined, size: 16),
+                label: const Text('Open'),
+              )),
+            ]),
+          ]),
+        ));
+      },
+    );
+  }
+}
+
 
 // ── Shimmers ──────────────────────────────────────────────────────────────────
 class _BusinessHeaderShimmer extends StatelessWidget {

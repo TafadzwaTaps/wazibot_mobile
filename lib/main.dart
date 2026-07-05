@@ -1,7 +1,8 @@
 /// lib/main.dart
 library;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, FlutterError, PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +18,18 @@ import 'features/settings/presentation/screens/settings_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ── Global error handlers ─────────────────────────────────────────────────
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('WAZIBOT FLUTTER ERROR: ${details.exceptionAsString()}');
+    debugPrint('Stack: ${details.stack}');
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('WAZIBOT PLATFORM ERROR: $error');
+    debugPrint('Stack: $stack');
+    return true;
+  };
+
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -28,13 +41,6 @@ void main() async {
   ));
 
   final prefs = await SharedPreferences.getInstance();
-
-  // Firebase — uncomment after adding google-services.json (see FIREBASE_SETUP.md)
-  // if (!kIsWeb) {
-  //   await Firebase.initializeApp(
-  //     options: DefaultFirebaseOptions.currentPlatform,
-  //   );
-  // }
 
   runApp(ProviderScope(
     overrides: [
@@ -57,13 +63,23 @@ class _WaziBotAppState extends ConsumerState<WaziBotApp> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Local notifications (no Firebase needed)
       if (!kIsWeb) {
         final router = ref.read(routerProvider);
         NotificationService.init(router);
       }
-      ref.read(securityProvider);
-      // Start background sync engine
-      ref.read(syncProvider);
+      // Security (biometric + session timeout)
+      try {
+        ref.read(securityProvider);
+      } catch (e) {
+        debugPrint('WAZIBOT: SecurityProvider init failed: $e');
+      }
+      // Background sync
+      try {
+        ref.read(syncProvider);
+      } catch (e) {
+        debugPrint('WAZIBOT: SyncProvider init failed: $e');
+      }
     });
   }
 
@@ -71,7 +87,13 @@ class _WaziBotAppState extends ConsumerState<WaziBotApp> {
   Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
-    final security = ref.watch(securityProvider);
+
+    SecurityState? security;
+    try {
+      security = ref.watch(securityProvider);
+    } catch (e) {
+      debugPrint('WAZIBOT: securityProvider watch failed: $e');
+    }
 
     return MaterialApp.router(
       title: 'WaziBot',
@@ -81,7 +103,7 @@ class _WaziBotAppState extends ConsumerState<WaziBotApp> {
       themeMode: themeMode,
       routerConfig: router,
       builder: (context, child) {
-        if (security.isLocked) return const BiometricLockScreen();
+        if (security?.isLocked == true) return const BiometricLockScreen();
         return ActivityTracker(
           child: child ?? const SizedBox.shrink(),
         );

@@ -70,12 +70,6 @@ final cachedAnalyticsProvider =
   }
 });
 
-/// DashboardStats provider — wraps analytics map in the model.
-final dashboardStatsProvider = Provider<AsyncValue<DashboardStats>>((ref) {
-  return ref.watch(cachedAnalyticsProvider).whenData(
-      DashboardStats.fromJson);
-});
-
 Map<String, dynamic> _emptyStats() => const {
       'total_orders': 0,
       'paid_orders': 0,
@@ -549,7 +543,8 @@ class BriefingData {
 
 final briefingDataProvider = Provider<BriefingData>((ref) {
   final profile = ref.watch(cachedProfileProvider).valueOrNull;
-  final statsAsync = ref.watch(dashboardStatsProvider);
+  final statsMap = ref.watch(cachedAnalyticsProvider).valueOrNull;
+  final stats = statsMap != null ? DashboardStats.fromJson(statsMap) : null;
   final orders = ref.watch(cachedOrdersProvider(null)).valueOrNull;
   final conversations =
       ref.watch(cachedConversationsProvider(null)).valueOrNull;
@@ -560,7 +555,7 @@ final briefingDataProvider = Provider<BriefingData>((ref) {
 
   return BriefingData(
     profile: profile,
-    stats: statsAsync.valueOrNull,
+    stats: stats,
     orders: orders,
     conversations: conversations,
     lowStock: lowStock,
@@ -577,4 +572,48 @@ final briefingIsLoadingProvider = Provider<bool>((ref) {
   final profileLoading = ref.watch(cachedProfileProvider).isLoading;
   final statsLoading = ref.watch(cachedAnalyticsProvider).isLoading;
   return profileLoading || statsLoading;
+});
+
+// ── Trial status (GET /trial/status) ─────────────────────────────────────────
+/// Mirrors web loadTrialBanner — trial_active, billing_status, trial_ends_at
+final trialStatusProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+  final api = ref.watch(apiClientProvider);
+  final cache = ref.watch(cacheServiceProvider);
+  const key = 'trial_status';
+  try {
+    final resp = await api.get('/trial/status');
+    final data = resp.data as Map<String, dynamic>;
+    await cache.set(key, data, ttl: CacheService.ttlLong);
+    return data;
+  } catch (_) {
+    final stale = cache.getStale(key);
+    if (stale is Map) return Map<String, dynamic>.from(stale);
+    return {};
+  }
+});
+
+// ── Growth insights (GET /insights/growth) ────────────────────────────────────
+/// Mirrors web renderGrowthCard — quick_wins:[{title, value, priority}]
+final growthInsightsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final api = ref.watch(apiClientProvider);
+  final cache = ref.watch(cacheServiceProvider);
+  const key = 'growth_insights';
+  try {
+    final resp = await api.get('/insights/growth');
+    final data = resp.data as Map<String, dynamic>;
+    final wins = (data['quick_wins'] as List? ?? [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    await cache.set(key, wins, ttl: CacheService.ttlMedium);
+    return wins;
+  } catch (_) {
+    final stale = cache.getStale(key);
+    if (stale is List) {
+      return stale.whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return [];
+  }
 });
